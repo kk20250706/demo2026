@@ -11,7 +11,7 @@ def _convert_fbx_to_obj(fbx_path: Path) -> Path:
         "import bpy\n"
         "bpy.ops.wm.read_factory_settings(use_empty=True)\n"
         f"bpy.ops.import_scene.fbx(filepath='{fbx_path}')\n"
-        f"bpy.ops.wm.obj_export(filepath='{obj_path}')\n"
+        f"bpy.ops.export_scene.obj(filepath='{obj_path}', use_selection=False)\n"
     )
     print(f"[IO] Converting FBX -> OBJ via Blender...")
     result = subprocess.run(
@@ -30,7 +30,7 @@ def _convert_obj_to_fbx(obj_path: Path, fbx_path: Path):
     script = (
         "import bpy\n"
         "bpy.ops.wm.read_factory_settings(use_empty=True)\n"
-        f"bpy.ops.wm.obj_import(filepath='{obj_path}')\n"
+        f"bpy.ops.import_scene.obj(filepath='{obj_path}')\n"
         f"bpy.ops.export_scene.fbx(filepath='{fbx_path}')\n"
     )
     print(f"[IO] Converting OBJ -> FBX via Blender...")
