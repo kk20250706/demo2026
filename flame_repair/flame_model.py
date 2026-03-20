@@ -84,27 +84,45 @@ def lbs(v, J, rot_mats, parents, weights):
     batch_size = v.shape[0]
     num_joints = J.shape[1]
 
-    transforms = torch.zeros(batch_size, num_joints, 4, 4, device=v.device, dtype=v.dtype)
+    transforms_list = []
 
     for i in range(num_joints):
         rot = rot_mats[:, i]
         t = J[:, i].unsqueeze(-1)
-        pad = torch.zeros(batch_size, 1, 4, device=v.device, dtype=v.dtype)
-        pad[:, :, 3] = 1
-        transform = torch.cat([torch.cat([rot, t], dim=-1), pad], dim=1)
+
+        upper = torch.cat([rot, t], dim=-1)
+        lower = torch.tensor([0.0, 0.0, 0.0, 1.0], device=v.device, dtype=v.dtype)
+        lower = lower.view(1, 1, 4).expand(batch_size, -1, -1)
+        transform = torch.cat([upper, lower], dim=1)
 
         if parents[i] < 0:
-            transforms[:, i] = transform
+            current = transform
         else:
-            transforms[:, i] = torch.bmm(transforms[:, parents[i]].clone(), transform)
+            current = torch.bmm(transforms_list[int(parents[i])], transform)
 
-    posed_joints = transforms[:, :, :3, 3].clone()
+        transforms_list.append(current)
+
+    transforms = torch.stack(transforms_list, dim=1)
+
+    joint_rest = torch.cat(
+        [J, torch.zeros(batch_size, num_joints, 1, device=v.device, dtype=v.dtype)],
+        dim=-1,
+    ).unsqueeze(-1)
+
+    joint_offsets = torch.matmul(transforms, joint_rest)
     joint_transforms = transforms.clone()
-    joint_rest = torch.cat([J, torch.zeros(batch_size, num_joints, 1, device=v.device, dtype=v.dtype)], dim=-1)
-    joint_rest = joint_rest.unsqueeze(-1)
-    joint_transforms[:, :, :, 3:] = joint_transforms[:, :, :, 3:] - torch.matmul(joint_transforms, joint_rest)
+    joint_transforms = torch.cat(
+        [joint_transforms[:, :, :, :3], joint_transforms[:, :, :, 3:] - joint_offsets],
+        dim=-1,
+    )
 
-    T = torch.einsum("bvj,bjmn->bvmn", weights, joint_transforms)
-    v_homo = torch.cat([v, torch.ones(batch_size, v.shape[1], 1, device=v.device, dtype=v.dtype)], dim=-1)
+    weights_batch = weights.unsqueeze(0).expand(batch_size, -1, -1)
+    T = torch.einsum("bvj,bjmn->bvmn", weights_batch, joint_transforms)
+
+    v_homo = torch.cat(
+        [v, torch.ones(batch_size, v.shape[1], 1, device=v.device, dtype=v.dtype)],
+        dim=-1,
+    )
+
     v_posed = torch.matmul(T, v_homo.unsqueeze(-1))[:, :, :3, 0]
     return v_posed

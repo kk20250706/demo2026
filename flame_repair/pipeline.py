@@ -31,7 +31,7 @@ class MeshRepairPipeline:
         flame_iters: int = 500,
     ) -> trimesh.Trimesh:
         print(f"\n{'='*60}")
-        print(f"  Mesh Repair Pipeline")
+        print("  Mesh Repair Pipeline")
         print(f"  Input:  {input_path}")
         print(f"  Output: {output_path}")
         print(f"  Mode:   {mode}")
@@ -58,30 +58,41 @@ class MeshRepairPipeline:
             mesh = repair_mesh(mesh, verbose=False)
 
         elif mode == "flame_blend":
-            print("\n[Step 4] FLAME Fitting & Blending")
+            print("\n[Step 4] FLAME Fitting & Local Repair Blending")
             self._ensure_fitter()
             result = self.fitter.fit(mesh, n_iters=flame_iters)
             flame_mesh = result["mesh"]
-            mesh = _blend_meshes(mesh, flame_mesh, alpha=0.3)
+            mesh = _blend_meshes(mesh, flame_mesh)
 
         save_mesh(mesh, output_path)
         print(f"\n[Done] Output saved to {output_path}")
         return mesh
 
 
-def _blend_meshes(original: trimesh.Trimesh, flame: trimesh.Trimesh, alpha: float = 0.3) -> trimesh.Trimesh:
+def _blend_meshes(original: trimesh.Trimesh, flame: trimesh.Trimesh) -> trimesh.Trimesh:
     from scipy.spatial import cKDTree
     import numpy as np
 
-    tree = cKDTree(flame.vertices)
-    dists, indices = tree.query(original.vertices)
-    median_dist = np.median(dists)
+    original_vertices = np.asarray(original.vertices)
+    flame_vertices = np.asarray(flame.vertices)
 
-    weights = np.exp(-dists / (median_dist + 1e-8))
-    weights = weights * alpha
-    weights = weights.reshape(-1, 1)
+    tree = cKDTree(original_vertices)
+    dists, indices = tree.query(flame_vertices)
+    matched_original = original_vertices[indices]
 
-    blended_verts = original.vertices * (1 - weights) + flame.vertices[indices] * weights
-    result = trimesh.Trimesh(vertices=blended_verts, faces=original.faces, process=False)
+    median_dist = float(np.median(dists))
+    mad_dist = float(np.median(np.abs(dists - median_dist)))
+    support_scale = max(median_dist + 2.5 * mad_dist, 1e-6)
+
+    support = np.exp(-((dists / support_scale) ** 2)).reshape(-1, 1)
+    blended_verts = flame_vertices * (1.0 - support) + matched_original * support
+
+    repaired_ratio = float(np.mean(dists > support_scale))
+    print(
+        f"[Blend] Preserving original detail where supported; "
+        f"using FLAME prior on sparse/damaged regions ({repaired_ratio:.1%} repaired)"
+    )
+
+    result = trimesh.Trimesh(vertices=blended_verts, faces=flame.faces, process=False)
     result.fix_normals()
     return result
