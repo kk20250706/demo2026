@@ -1,0 +1,8 @@
+services:
+  mesh-repair:
+    build: .
+    volumes:
+      - ./input:/app/input
+      - ./output:/app/output
+      - ./models:/app/models
+    command: ["input/liukui.fbx", "output/repaired.obj", "--mode", "repair_only", "--device", "cpu"]
