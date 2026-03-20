@@ -19,13 +19,20 @@ class FLAMELayer(nn.Module):
         self.register_buffer("v_template", torch.tensor(to_np(flame_model["v_template"]), dtype=self.dtype))
         self.register_buffer("faces", torch.tensor(to_np(flame_model["f"]).astype(np.int64), dtype=torch.long))
 
-        shapedirs = torch.tensor(to_np(flame_model["shapedirs"]), dtype=self.dtype)
+        shapedirs = to_np(flame_model["shapedirs"])
+        if shapedirs.ndim == 2:
+            n_verts = len(to_np(flame_model["v_template"]))
+            shapedirs = shapedirs.reshape(n_verts, 3, -1)
+        shapedirs = torch.tensor(shapedirs, dtype=self.dtype)
         self.register_buffer("shapedirs_shape", shapedirs[:, :, :n_shape])
         self.register_buffer("shapedirs_exp", shapedirs[:, :, 300 : 300 + n_exp])
 
         self.register_buffer("J_regressor", torch.tensor(np.array(flame_model["J_regressor"].todense()), dtype=self.dtype))
 
         posedirs = to_np(flame_model["posedirs"])
+        if posedirs.ndim == 2:
+            n_verts = len(to_np(flame_model["v_template"]))
+            posedirs = posedirs.reshape(n_verts, 3, -1)
         num_pose_basis = posedirs.shape[-1]
         posedirs = torch.tensor(posedirs, dtype=self.dtype)
         self.register_buffer("posedirs", posedirs.reshape(-1, num_pose_basis))
