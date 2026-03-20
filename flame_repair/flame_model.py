@@ -12,25 +12,29 @@ class FLAMELayer(nn.Module):
         with open(flame_model_path, "rb") as f:
             flame_model = pickle.load(f, encoding="latin1")
 
-        self.dtype = torch.float32
-        self.register_buffer("v_template", torch.tensor(flame_model["v_template"], dtype=self.dtype))
-        self.register_buffer("faces", torch.tensor(flame_model["f"].astype(np.int64), dtype=torch.long))
+        def to_np(x):
+            return np.array(x) if not isinstance(x, np.ndarray) else x
 
-        shapedirs = torch.tensor(flame_model["shapedirs"], dtype=self.dtype)
+        self.dtype = torch.float32
+        self.register_buffer("v_template", torch.tensor(to_np(flame_model["v_template"]), dtype=self.dtype))
+        self.register_buffer("faces", torch.tensor(to_np(flame_model["f"]).astype(np.int64), dtype=torch.long))
+
+        shapedirs = torch.tensor(to_np(flame_model["shapedirs"]), dtype=self.dtype)
         self.register_buffer("shapedirs_shape", shapedirs[:, :, :n_shape])
         self.register_buffer("shapedirs_exp", shapedirs[:, :, 300 : 300 + n_exp])
 
         self.register_buffer("J_regressor", torch.tensor(np.array(flame_model["J_regressor"].todense()), dtype=self.dtype))
 
-        num_pose_basis = flame_model["posedirs"].shape[-1]
-        posedirs = torch.tensor(flame_model["posedirs"], dtype=self.dtype)
+        posedirs = to_np(flame_model["posedirs"])
+        num_pose_basis = posedirs.shape[-1]
+        posedirs = torch.tensor(posedirs, dtype=self.dtype)
         self.register_buffer("posedirs", posedirs.reshape(-1, num_pose_basis))
 
-        parents = flame_model["kintree_table"][0].astype(np.int64)
+        parents = to_np(flame_model["kintree_table"])[0].astype(np.int64)
         parents[0] = -1
         self.register_buffer("parents", torch.tensor(parents, dtype=torch.long))
 
-        lbs_weights = torch.tensor(flame_model["weights"], dtype=self.dtype)
+        lbs_weights = torch.tensor(to_np(flame_model["weights"]), dtype=self.dtype)
         self.register_buffer("lbs_weights", lbs_weights)
 
         self.n_shape = n_shape
