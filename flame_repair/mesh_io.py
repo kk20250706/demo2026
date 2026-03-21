@@ -1,8 +1,20 @@
 import trimesh
 import numpy as np
 import subprocess
-import tempfile
+import shutil
 from pathlib import Path
+
+
+def is_blender_available() -> bool:
+    return shutil.which("blender") is not None
+
+
+def is_colab_runtime() -> bool:
+    try:
+        import google.colab
+        return True
+    except ImportError:
+        return False
 
 
 def _convert_fbx_to_obj(fbx_path: Path) -> Path:
@@ -13,7 +25,7 @@ def _convert_fbx_to_obj(fbx_path: Path) -> Path:
         f"bpy.ops.import_scene.fbx(filepath='{fbx_path}')\n"
         f"bpy.ops.export_scene.obj(filepath='{obj_path}', use_selection=False)\n"
     )
-    print(f"[IO] Converting FBX -> OBJ via Blender...")
+    print("[IO] Converting FBX -> OBJ via Blender...")
     result = subprocess.run(
         ["blender", "--background", "--python-expr", script],
         capture_output=True, text=True, timeout=120,
@@ -21,7 +33,7 @@ def _convert_fbx_to_obj(fbx_path: Path) -> Path:
     if not obj_path.exists():
         print(f"[IO] Blender stdout: {result.stdout[-500:]}")
         print(f"[IO] Blender stderr: {result.stderr[-500:]}")
-        raise RuntimeError(f"Blender FBX conversion failed")
+        raise RuntimeError("Blender FBX conversion failed")
     print(f"[IO] Converted to {obj_path}")
     return obj_path
 
@@ -33,7 +45,7 @@ def _convert_obj_to_fbx(obj_path: Path, fbx_path: Path):
         f"bpy.ops.import_scene.obj(filepath='{obj_path}')\n"
         f"bpy.ops.export_scene.fbx(filepath='{fbx_path}')\n"
     )
-    print(f"[IO] Converting OBJ -> FBX via Blender...")
+    print("[IO] Converting OBJ -> FBX via Blender...")
     result = subprocess.run(
         ["blender", "--background", "--python-expr", script],
         capture_output=True, text=True, timeout=120,
@@ -41,7 +53,7 @@ def _convert_obj_to_fbx(obj_path: Path, fbx_path: Path):
     if not fbx_path.exists():
         print(f"[IO] Blender stdout: {result.stdout[-500:]}")
         print(f"[IO] Blender stderr: {result.stderr[-500:]}")
-        raise RuntimeError(f"Blender FBX export failed")
+        raise RuntimeError("Blender FBX export failed")
     print(f"[IO] Exported to {fbx_path}")
 
 
@@ -52,6 +64,12 @@ def load_mesh(filepath: str) -> trimesh.Trimesh:
 
     load_path = filepath
     if filepath.suffix.lower() == ".fbx":
+        if not is_blender_available():
+            raise RuntimeError(
+                "Blender not found. Install with:\n"
+                "  Linux/Colab: apt-get install -y blender\n"
+                "  macOS: brew install --cask blender"
+            )
         load_path = _convert_fbx_to_obj(filepath)
 
     scene_or_mesh = trimesh.load(str(load_path), force="mesh")
@@ -76,6 +94,12 @@ def save_mesh(mesh: trimesh.Trimesh, filepath: str, file_format: str = None):
         suffix = f".{file_format}"
 
     if suffix == ".fbx":
+        if not is_blender_available():
+            fallback = filepath.with_suffix(".obj")
+            print(f"[IO] Blender not available; saving as OBJ instead: {fallback}")
+            mesh.export(str(fallback), file_type="obj")
+            print(f"[IO] Saved mesh to {fallback}: {len(mesh.vertices)} vertices, {len(mesh.faces)} faces")
+            return
         obj_path = filepath.with_suffix(".obj")
         mesh.export(str(obj_path), file_type="obj")
         _convert_obj_to_fbx(obj_path, filepath)

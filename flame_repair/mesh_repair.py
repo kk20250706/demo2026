@@ -108,3 +108,115 @@ def remesh_uniform(mesh: trimesh.Trimesh, target_faces: Optional[int] = None) ->
     except ImportError:
         print("[Repair] open3d not available, skipping remesh")
         return mesh
+
+
+def reconstruct_body(mesh: trimesh.Trimesh, poisson_depth: int = 8) -> trimesh.Trimesh:
+    import open3d as o3d
+    from scipy.spatial import cKDTree
+
+    print(f"[Reconstruct] Poisson reconstruction (depth={poisson_depth})...")
+
+    verts = np.asarray(mesh.vertices, dtype=np.float64)
+    faces = np.asarray(mesh.faces)
+
+    o3d_mesh = o3d.geometry.TriangleMesh()
+    o3d_mesh.vertices = o3d.utility.Vector3dVector(verts)
+    o3d_mesh.triangles = o3d.utility.Vector3iVector(faces)
+    o3d_mesh.compute_vertex_normals()
+
+    pcd = o3d_mesh.sample_points_poisson_disk(number_of_points=min(len(verts) * 3, 300000))
+    pcd.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.1, max_nn=30))
+    pcd.orient_normals_consistent_tangent_plane(k=15)
+
+    recon_mesh, densities = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(
+        pcd, depth=poisson_depth, scale=1.1, linear_fit=False
+    )
+
+    densities_np = np.asarray(densities)
+    density_threshold = np.percentile(densities_np, 5)
+    vertices_to_remove = densities_np < density_threshold
+    recon_mesh.remove_vertices_by_mask(vertices_to_remove)
+
+    recon_mesh.remove_degenerate_triangles()
+    recon_mesh.remove_duplicated_vertices()
+    recon_mesh.remove_non_manifold_edges()
+
+    recon_verts = np.asarray(recon_mesh.vertices, dtype=np.float64)
+    recon_faces = np.asarray(recon_mesh.triangles)
+
+    if len(recon_verts) == 0 or len(recon_faces) == 0:
+        print("[Reconstruct] Reconstruction produced empty mesh, returning original")
+        return mesh
+
+    tree = cKDTree(verts)
+    dists, _ = tree.query(recon_verts)
+    bbox_diag = float(np.linalg.norm(verts.max(axis=0) - verts.min(axis=0)))
+    keep_threshold = bbox_diag * 0.05
+
+    face_verts_dists = dists[recon_faces]
+    face_max_dist = face_verts_dists.max(axis=1)
+    valid_faces = face_max_dist < keep_threshold
+
+    if valid_faces.sum() < 100:
+        keep_threshold = bbox_diag * 0.15
+        face_max_dist = face_verts_dists.max(axis=1)
+        valid_faces = face_max_dist < keep_threshold
+
+    filtered_faces = recon_faces[valid_faces]
+    result = trimesh.Trimesh(vertices=recon_verts, faces=filtered_faces, process=True)
+    result = _keep_largest_component(result)
+    result.fix_normals()
+
+    print(f"[Reconstruct] Result: {len(result.vertices)} verts, {len(result.faces)} faces, watertight={result.is_watertight}")
+    return result
+
+
+def blend_reconstruction(
+    original: trimesh.Trimesh,
+    reconstructed: trimesh.Trimesh,
+    distance_threshold: Optional[float] = None,
+) -> trimesh.Trimesh:
+    from scipy.spatial import cKDTree
+
+    orig_verts = np.asarray(original.vertices, dtype=np.float64)
+    recon_verts = np.asarray(reconstructed.vertices, dtype=np.float64)
+
+    tree = cKDTree(orig_verts)
+    dists, indices = tree.query(recon_verts)
+
+    if distance_threshold is None:
+        bbox_diag = float(np.linalg.norm(orig_verts.max(axis=0) - orig_verts.min(axis=0)))
+        distance_threshold = bbox_diag * 0.02
+
+    support = np.exp(-((dists / distance_threshold) ** 2)).reshape(-1, 1)
+    matched_orig = orig_verts[indices]
+    blended_verts = recon_verts * (1.0 - support) + matched_orig * support
+
+    repaired_ratio = float(np.mean(dists > distance_threshold))
+    print(f"[Blend] Original detail preserved where supported; FLAME/Poisson prior used on {repaired_ratio:.1%} of vertices")
+
+    result = trimesh.Trimesh(vertices=blended_verts, faces=reconstructed.faces, process=False)
+    result.fix_normals()
+    return result
+
+
+def _keep_largest_component(mesh: trimesh.Trimesh) -> trimesh.Trimesh:
+    components = trimesh.graph.connected_components(mesh.face_adjacency, min_len=3)
+    components = list(components)
+    if not components:
+        return mesh
+    largest = max(components, key=len)
+    mask = np.zeros(len(mesh.faces), dtype=bool)
+    mask[largest] = True
+    mesh.update_faces(mask)
+    mesh.remove_unreferenced_vertices()
+    return mesh
+
+
+def auto_poisson_depth(num_faces: int) -> int:
+    if num_faces < 20000:
+        return 7
+    elif num_faces < 150000:
+        return 8
+    else:
+        return 9
