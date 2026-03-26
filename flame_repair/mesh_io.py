@@ -7,11 +7,15 @@ from pathlib import Path
 
 def _convert_fbx_to_obj(fbx_path: Path) -> Path:
     obj_path = fbx_path.with_suffix(".obj")
+    # Compatible with both old Blender (2.x/3.0-3.2) and new (3.3+)
     script = (
         "import bpy\n"
         "bpy.ops.wm.read_factory_settings(use_empty=True)\n"
         f"bpy.ops.import_scene.fbx(filepath='{fbx_path}')\n"
-        f"bpy.ops.wm.obj_export(filepath='{obj_path}')\n"
+        "try:\n"
+        f"    bpy.ops.wm.obj_export(filepath='{obj_path}')\n"
+        "except AttributeError:\n"
+        f"    bpy.ops.export_scene.obj(filepath='{obj_path}')\n"
     )
     print(f"[IO] Converting FBX -> OBJ via Blender...")
     result = subprocess.run(
@@ -27,10 +31,14 @@ def _convert_fbx_to_obj(fbx_path: Path) -> Path:
 
 
 def _convert_obj_to_fbx(obj_path: Path, fbx_path: Path):
+    # Compatible with both old Blender (2.x/3.0-3.2) and new (3.3+)
     script = (
         "import bpy\n"
         "bpy.ops.wm.read_factory_settings(use_empty=True)\n"
-        f"bpy.ops.wm.obj_import(filepath='{obj_path}')\n"
+        "try:\n"
+        f"    bpy.ops.wm.obj_import(filepath='{obj_path}')\n"
+        "except AttributeError:\n"
+        f"    bpy.ops.import_scene.obj(filepath='{obj_path}')\n"
         f"bpy.ops.export_scene.fbx(filepath='{fbx_path}')\n"
     )
     print(f"[IO] Converting OBJ -> FBX via Blender...")
