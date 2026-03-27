@@ -19,6 +19,16 @@ def _mock_chumpy():
                 return np.asarray(args[0]).view(cls)
             return np.array([]).view(cls)
 
+        def __setstate__(self, state):
+            if isinstance(state, dict):
+                # chumpy pickle passes a dict; just ignore it
+                pass
+            else:
+                super().__setstate__(state)
+
+        def __reduce__(self):
+            return (np.array, (np.asarray(self),))
+
     # Create main module and all submodules that pickle may reference
     chumpy = types.ModuleType('chumpy')
     chumpy._is_mock = True
