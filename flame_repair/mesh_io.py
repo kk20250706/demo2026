@@ -6,25 +6,21 @@ from pathlib import Path
 
 
 def _blender_script_fbx_to_obj(fbx_path: str, obj_path: str) -> str:
+    # Use export_scene.obj (works on all Blender versions 2.8+)
     return "\n".join([
         "import bpy",
         "bpy.ops.wm.read_factory_settings(use_empty=True)",
         f"bpy.ops.import_scene.fbx(filepath='{fbx_path}')",
-        f"if hasattr(bpy.ops.wm, 'obj_export'):",
-        f"    bpy.ops.wm.obj_export(filepath='{obj_path}')",
-        f"else:",
-        f"    bpy.ops.export_scene.obj(filepath='{obj_path}', use_selection=False)",
+        f"bpy.ops.export_scene.obj(filepath='{obj_path}', use_selection=False)",
     ])
 
 
 def _blender_script_obj_to_fbx(obj_path: str, fbx_path: str) -> str:
+    # Use import_scene.obj (works on all Blender versions 2.8+)
     return "\n".join([
         "import bpy",
         "bpy.ops.wm.read_factory_settings(use_empty=True)",
-        f"if hasattr(bpy.ops.wm, 'obj_import'):",
-        f"    bpy.ops.wm.obj_import(filepath='{obj_path}')",
-        f"else:",
-        f"    bpy.ops.import_scene.obj(filepath='{obj_path}')",
+        f"bpy.ops.import_scene.obj(filepath='{obj_path}')",
         f"bpy.ops.export_scene.fbx(filepath='{fbx_path}')",
     ])
 
