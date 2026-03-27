@@ -7,40 +7,50 @@ import types
 from pathlib import Path
 
 
+class _ChumphyCh(np.ndarray):
+    """Minimal stand-in for chumpy.Ch that unpickles into a real numpy array."""
+
+    def __new__(cls, *args, **kwargs):
+        if args:
+            return np.asarray(args[0]).view(cls)
+        return np.zeros(0).view(cls)
+
+    def __setstate__(self, state):
+        if isinstance(state, dict):
+            # chumpy stores data in state['x'] as the underlying array
+            if 'x' in state:
+                data = np.asarray(state['x'])
+                self.resize(data.shape, refcheck=False)
+                self[:] = data
+            elif 'a' in state:
+                data = np.asarray(state['a'])
+                self.resize(data.shape, refcheck=False)
+                self[:] = data
+        elif isinstance(state, tuple):
+            super().__setstate__(state)
+
+    def __reduce__(self):
+        return (np.array, (np.asarray(self),))
+
+    def __array_finalize__(self, obj):
+        pass
+
+
 def _mock_chumpy():
     """Mock chumpy and all its submodules so pickle.load can deserialize
     FLAME .pkl files without installing chumpy."""
     if 'chumpy' in sys.modules and hasattr(sys.modules['chumpy'], '_is_mock'):
         return
 
-    class Ch(np.ndarray):
-        def __new__(cls, *args, **kwargs):
-            if args:
-                return np.asarray(args[0]).view(cls)
-            return np.array([]).view(cls)
-
-        def __setstate__(self, state):
-            if isinstance(state, dict):
-                # chumpy pickle passes a dict; just ignore it
-                pass
-            else:
-                super().__setstate__(state)
-
-        def __reduce__(self):
-            return (np.array, (np.asarray(self),))
-
-    # Create main module and all submodules that pickle may reference
     chumpy = types.ModuleType('chumpy')
     chumpy._is_mock = True
-    chumpy.Ch = Ch
-    chumpy.ch = types.ModuleType('chumpy.ch')
-    chumpy.ch.Ch = Ch
+    chumpy.Ch = _ChumphyCh
 
     submodules = ['ch', 'utils', 'linalg', 'optimization', 'logic', 'extras']
     sys.modules['chumpy'] = chumpy
     for sub in submodules:
         mod = types.ModuleType(f'chumpy.{sub}')
-        mod.Ch = Ch
+        mod.Ch = _ChumphyCh
         setattr(chumpy, sub, mod)
         sys.modules[f'chumpy.{sub}'] = mod
 
@@ -52,6 +62,12 @@ class FLAMELayer(nn.Module):
         _mock_chumpy()
         with open(flame_model_path, "rb") as f:
             flame_model = pickle.load(f, encoding="latin1")
+
+        # Convert any remaining chumpy objects to plain numpy arrays
+        for key in list(flame_model.keys()):
+            val = flame_model[key]
+            if isinstance(val, np.ndarray) and type(val) is not np.ndarray:
+                flame_model[key] = np.array(val)
 
         self.dtype = torch.float32
         self.register_buffer("v_template", torch.tensor(flame_model["v_template"], dtype=self.dtype))
