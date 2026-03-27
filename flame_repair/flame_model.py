@@ -8,19 +8,31 @@ from pathlib import Path
 
 
 def _mock_chumpy():
-    """Mock chumpy module so pickle.load can deserialize FLAME .pkl files
-    without installing chumpy (which has numpy compatibility issues)."""
-    if 'chumpy' not in sys.modules:
-        chumpy = types.ModuleType('chumpy')
-        # chumpy.Ch is the main class stored in FLAME pkl files
-        # When unpickled, it just needs to behave like a numpy array
-        class Ch(np.ndarray):
-            def __new__(cls, *args, **kwargs):
-                if args:
-                    return np.asarray(args[0]).view(cls)
-                return np.array([]).view(cls)
-        chumpy.Ch = Ch
-        sys.modules['chumpy'] = chumpy
+    """Mock chumpy and all its submodules so pickle.load can deserialize
+    FLAME .pkl files without installing chumpy."""
+    if 'chumpy' in sys.modules and hasattr(sys.modules['chumpy'], '_is_mock'):
+        return
+
+    class Ch(np.ndarray):
+        def __new__(cls, *args, **kwargs):
+            if args:
+                return np.asarray(args[0]).view(cls)
+            return np.array([]).view(cls)
+
+    # Create main module and all submodules that pickle may reference
+    chumpy = types.ModuleType('chumpy')
+    chumpy._is_mock = True
+    chumpy.Ch = Ch
+    chumpy.ch = types.ModuleType('chumpy.ch')
+    chumpy.ch.Ch = Ch
+
+    submodules = ['ch', 'utils', 'linalg', 'optimization', 'logic', 'extras']
+    sys.modules['chumpy'] = chumpy
+    for sub in submodules:
+        mod = types.ModuleType(f'chumpy.{sub}')
+        mod.Ch = Ch
+        setattr(chumpy, sub, mod)
+        sys.modules[f'chumpy.{sub}'] = mod
 
 
 class FLAMELayer(nn.Module):
