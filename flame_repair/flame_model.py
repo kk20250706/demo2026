@@ -7,67 +7,53 @@ import types
 from pathlib import Path
 
 
-class _ChumphyCh(np.ndarray):
-    """Minimal stand-in for chumpy.Ch that unpickles into a real numpy array."""
+def _load_flame_pkl(path: str) -> dict:
+    """Load FLAME .pkl file without requiring chumpy.
 
-    def __new__(cls, *args, **kwargs):
-        if args:
-            return np.asarray(args[0]).view(cls)
-        return np.zeros(0).view(cls)
+    Uses a custom Unpickler that intercepts chumpy class references
+    and replaces them with numpy arrays during deserialization.
+    """
+    import io
 
-    def __setstate__(self, state):
-        if isinstance(state, dict):
-            # chumpy stores data in state['x'] as the underlying array
-            if 'x' in state:
-                data = np.asarray(state['x'])
-                self.resize(data.shape, refcheck=False)
-                self[:] = data
-            elif 'a' in state:
-                data = np.asarray(state['a'])
-                self.resize(data.shape, refcheck=False)
-                self[:] = data
-        elif isinstance(state, tuple):
-            super().__setstate__(state)
+    class _Dummy:
+        """Catch-all for any chumpy object during unpickling."""
+        def __init__(self, *args, **kwargs):
+            pass
+        def __setstate__(self, state):
+            if isinstance(state, dict) and 'x' in state:
+                self._data = np.asarray(state['x'])
+            elif isinstance(state, dict) and 'a' in state:
+                self._data = np.asarray(state['a'])
+            else:
+                self._data = None
 
-    def __reduce__(self):
-        return (np.array, (np.asarray(self),))
+    class _FlameUnpickler(pickle.Unpickler):
+        def find_class(self, module, name):
+            if module.startswith('chumpy'):
+                return _Dummy
+            return super().find_class(module, name)
 
-    def __array_finalize__(self, obj):
-        pass
+    with open(path, 'rb') as f:
+        data = _FlameUnpickler(f, encoding='latin1').load()
 
+    # Convert any _Dummy objects back to numpy arrays
+    def _convert(obj):
+        if isinstance(obj, _Dummy):
+            return getattr(obj, '_data', np.array([]))
+        if isinstance(obj, dict):
+            return {k: _convert(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [_convert(v) for v in obj]
+        return obj
 
-def _mock_chumpy():
-    """Mock chumpy and all its submodules so pickle.load can deserialize
-    FLAME .pkl files without installing chumpy."""
-    if 'chumpy' in sys.modules and hasattr(sys.modules['chumpy'], '_is_mock'):
-        return
-
-    chumpy = types.ModuleType('chumpy')
-    chumpy._is_mock = True
-    chumpy.Ch = _ChumphyCh
-
-    submodules = ['ch', 'utils', 'linalg', 'optimization', 'logic', 'extras']
-    sys.modules['chumpy'] = chumpy
-    for sub in submodules:
-        mod = types.ModuleType(f'chumpy.{sub}')
-        mod.Ch = _ChumphyCh
-        setattr(chumpy, sub, mod)
-        sys.modules[f'chumpy.{sub}'] = mod
+    return _convert(data)
 
 
 class FLAMELayer(nn.Module):
 
     def __init__(self, flame_model_path: str, n_shape: int = 300, n_exp: int = 100):
         super().__init__()
-        _mock_chumpy()
-        with open(flame_model_path, "rb") as f:
-            flame_model = pickle.load(f, encoding="latin1")
-
-        # Convert any remaining chumpy objects to plain numpy arrays
-        for key in list(flame_model.keys()):
-            val = flame_model[key]
-            if isinstance(val, np.ndarray) and type(val) is not np.ndarray:
-                flame_model[key] = np.array(val)
+        flame_model = _load_flame_pkl(flame_model_path)
 
         self.dtype = torch.float32
         self.register_buffer("v_template", torch.tensor(flame_model["v_template"], dtype=self.dtype))
