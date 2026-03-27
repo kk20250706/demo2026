@@ -2,13 +2,32 @@ import torch
 import torch.nn as nn
 import numpy as np
 import pickle
+import sys
+import types
 from pathlib import Path
+
+
+def _mock_chumpy():
+    """Mock chumpy module so pickle.load can deserialize FLAME .pkl files
+    without installing chumpy (which has numpy compatibility issues)."""
+    if 'chumpy' not in sys.modules:
+        chumpy = types.ModuleType('chumpy')
+        # chumpy.Ch is the main class stored in FLAME pkl files
+        # When unpickled, it just needs to behave like a numpy array
+        class Ch(np.ndarray):
+            def __new__(cls, *args, **kwargs):
+                if args:
+                    return np.asarray(args[0]).view(cls)
+                return np.array([]).view(cls)
+        chumpy.Ch = Ch
+        sys.modules['chumpy'] = chumpy
 
 
 class FLAMELayer(nn.Module):
 
     def __init__(self, flame_model_path: str, n_shape: int = 300, n_exp: int = 100):
         super().__init__()
+        _mock_chumpy()
         with open(flame_model_path, "rb") as f:
             flame_model = pickle.load(f, encoding="latin1")
 
